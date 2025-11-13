@@ -86,4 +86,6 @@ Reference them here once captured:
 - Push tickets to external systems (GitHub issues, Trello cards) instead of CSV.
 - Deploy the app on Streamlit Community Cloud, Render, or HuggingFace Spaces for bonus credit.
 
+## The Link to deployed WEB APP
+https://capstoneproject1-fprjq4qybef9ydjfggt2jd.streamlit.app/
 
