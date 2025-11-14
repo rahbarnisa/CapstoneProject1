@@ -55,24 +55,64 @@ Console output (in Terminal) traces each request and executed SQL for auditing.
 - Users can also file tickets manually in the UI when automated answers are insufficient.
 - Extend `create_support_ticket` to integrate with GitHub/Jira/Trello webhooks if needed.
 
-## Screenshots
+## Functions
+[3 tools called]
 
-Add real screenshots to demonstrate the workflow from launch → question → result → ticket creation. For example:
+- `chat_completion_request` handles the raw POST to the Chat Completions API, including optional function descriptors, retrying on transient failures thanks to `tenacity`. It returns the HTTP response so other helpers can interpret it.
 
+```16:35:main.py
+@retry(wait=wait_random_exponential(min=1, max=40), stop=stop_after_attempt(3))
+def chat_completion_request(messages, functions=None, model=MODEL):
+    ...
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=json_data)
+    return response
 ```
-docs/
-  workflow_overview.png
-  agent_answer.png
-  ticket_confirmation.png
+
+- `ask_database` is the single function advertised to the model; once invoked it executes whatever SQL string the model produced against the `netflix.db` SQLite file and returns the rows (or raises an error that later logic can fix).
+
+```73:80:main.py
+def ask_database(conn, query):
+    results = conn.execute(query).fetchall()
+    return results
 ```
 
-Reference them here once captured:
+- `chat_completion_with_function_execution` wraps one full turn with the model: it calls `chat_completion_request`, inspects whether the model wants to call a function, and either returns the text response or routes control to `call_function`.
 
-![Workflow overview](docs/workflow_overview.png)
-![Agent answer](docs/agent_answer.png)
-![Ticket confirmation](docs/ticket_confirmation.png)
+```82:96:main.py
+def chat_completion_with_function_execution(messages, functions=None):
+    response = chat_completion_request(messages, functions)
+    full_message = response.json()["choices"][0]
+    if full_message["finish_reason"] == "function_call":
+        return call_function(messages, full_message)
+    ...
+```
 
-> Replace the placeholder images above with screenshots from your actual run to satisfy the assignment requirements.
+- `call_function` is the dispatcher that actually launches `ask_database` (the only supported tool), handles retry logic by asking the model to repair bad SQL, appends the function result back into the message list, and then asks the model to draft the final natural-language answer.
+
+```99:152:main.py
+def call_function(messages, full_message):
+    if full_message["message"]["function_call"]["name"] == "ask_database":
+        query = eval(...)
+        results = ask_database(conn, query["query"])
+        ...
+        messages.append({"role": "function", "name": "ask_database", "content": str(results)})
+        response = chat_completion_request(messages)
+        return response.json()
+```
+
+- In `conversation.py`, the `Conversation` class provides two helper methods: `add_message` appends structured chat turns, and `display_conversation` prints them back with color-coding for each role so you can inspect the dialogue.
+
+```4:25:conversation.py
+class Conversation:
+    def add_message(self, role, content):
+        self.conversation_history.append({"role": role, "content": content})
+
+    def display_conversation(self, detailed=False):
+        for message in self.conversation_history:
+            print(colored(f"{message['role']}: {message['content']}\n\n", role_to_color[message["role"]]))
+```
+
+Those are the main functions in this script and how each is used within the flow that answers the “top directors” question against the Netflix dataset.
 
 ## Troubleshooting
 
